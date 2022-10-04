@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:vector_math/vector_math_64.dart' as vec;
+import 'package:vector_math/vector_math_64.dart' show Vector2;
 
 void main() {
   runApp(const MyApp());
@@ -27,12 +27,12 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  bool isClip = false;
+  var isClip = false;
   final subject = Polygon(color: Colors.blueAccent, parts: []);
   final clip = Polygon(color: Colors.redAccent, parts: []);
   final result = Polygon(color: Colors.purpleAccent, parts: []);
 
-  void addPoint(vec.Vector2 point) {
+  void addPoint(Vector2 point) {
     if (isClip) {
       return clip.addPoint(point);
     }
@@ -73,7 +73,7 @@ class _MyHomePageState extends State<MyHomePage> {
           onTapDown: (details) {
             setState(() {
               final p = details.localPosition;
-              addPoint(vec.Vector2(p.dx, p.dy));
+              addPoint(Vector2(p.dx, p.dy));
             });
           },
           onSecondaryTap: () {
@@ -94,7 +94,7 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 class PolygonPart {
-  final List<vec.Vector2> points;
+  final List<Vector2> points;
   bool closed;
   PolygonPart({
     required this.points,
@@ -110,28 +110,32 @@ class Polygon {
     required this.parts,
   });
 
-  void addPoint(vec.Vector2 point) {
-    if (parts.isEmpty || parts.last.closed) {
-      parts.add(PolygonPart(points: []));
+  bool get closed => parts.isEmpty || parts.last.closed;
+  bool get closable => !closed && parts.last.points.length > 2;
+
+  void addPoint(Vector2 point) {
+    if (closed) {
+      return parts.add(PolygonPart(points: [point]));
     }
     parts.last.points.add(point);
   }
 
   void closePart() {
-    if (parts.isEmpty) {
+    if (!closable) {
       return;
     }
     parts.last.closed = true;
   }
 
   Path get path {
-    Path path = Path();
+    final path = Path();
     for (final part in parts) {
-      vec.Vector2 begin = part.points.first;
-      path.addOval(
-          Rect.fromCircle(center: Offset(begin.x, begin.y), radius: 1));
+      final begin = part.points.first;
+      if (part.points.length == 1) {
+        path.addOval(Rect.fromCircle(center: Offset(begin.x, begin.y), radius: 1.5));
+      }
       path.moveTo(begin.x, begin.y);
-      for (final point in part.points.sublist(1)) {
+      for (final point in part.points.skip(1)) {
         path.lineTo(point.x, point.y);
       }
       if (part.closed) {
@@ -149,7 +153,7 @@ class PolygonsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (final polygon in polygons) {
-      Paint paint = Paint()
+      final paint = Paint()
         ..color = polygon.color
         ..strokeWidth = 3
         ..style = PaintingStyle.stroke;
