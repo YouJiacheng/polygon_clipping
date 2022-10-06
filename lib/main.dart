@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' show Vector2;
@@ -414,12 +415,14 @@ List<Edge> split(List<Edge> edges) => [
 void addInterior({
   required List<Edge> edges,
   required Polygon polygon,
-  required HashMap<int, Edge> interiorEdges,
+  required HashMap<int, HashSet<Edge>> begin2InteriorEdges,
+  required HashMap<int, HashSet<Edge>> end2InteriorEdges,
 }) {
   bool inside = false;
   // var prevoiusEnd = AnnotatedPoint(i: -1); // -1 won't be any begin
   for (final edge in edges) {
     final begin = edge.begin;
+    final end = edge.end;
     // todo: avoid useless windingNumber computation
     // if (begin.i != prevoiusEnd.i || begin.t == 0) {
     //   // 非连续边，或为退化情况
@@ -439,10 +442,12 @@ void addInterior({
     // 认为是inside
     inside = onEdge(midpoint, polygon) || halfPlaneWindingNumber(midpoint, polygon) != 0;
     if (inside) {
-      assert(!interiorEdges.containsKey(begin.i) || interiorEdges[begin.i]!.end.i == edge.end.i);
-      interiorEdges[begin.i] = edge;
+      begin2InteriorEdges.putIfAbsent(begin.i, () => HashSet.identity());
+      end2InteriorEdges.putIfAbsent(end.i, () => HashSet.identity());
+      begin2InteriorEdges[begin.i]!.add(edge);
+      end2InteriorEdges[end.i]!.add(edge);
     }
-    // prevoiusEnd = edge.end;
+    // prevoiusEnd = end;
   }
 }
 
@@ -476,21 +481,55 @@ List<Ring> clipping({required Polygon subject, required Polygon clip}) {
   // 重新分割边
   final splitSubjectEdges = split(subjectEdges);
   final splitClipEdges = split(clipEdges);
-  final interiorEdges = HashMap<int, Edge>();
-  addInterior(edges: splitSubjectEdges, polygon: clip, interiorEdges: interiorEdges);
-  addInterior(edges: splitClipEdges, polygon: subject, interiorEdges: interiorEdges);
+  final begin2InteriorEdges = HashMap<int, HashSet<Edge>>();
+  final end2InteriorEdges = HashMap<int, HashSet<Edge>>();
+  addInterior(
+    edges: splitSubjectEdges,
+    polygon: clip,
+    begin2InteriorEdges: begin2InteriorEdges,
+    end2InteriorEdges: end2InteriorEdges,
+  );
+  addInterior(
+    edges: splitClipEdges,
+    polygon: subject,
+    begin2InteriorEdges: begin2InteriorEdges,
+    end2InteriorEdges: end2InteriorEdges,
+  );
   final result = <Ring>[];
-  while (interiorEdges.isNotEmpty) {
+  void remove<K, V>({
+    required HashMap<K, HashSet<V>> mapToSet,
+    required K mapkey,
+    required V setValue,
+  }) {
+    final set = mapToSet[mapkey]!;
+    if (set.length == 1) {
+      mapToSet.remove(mapkey);
+    } else {
+      set.remove(setValue);
+    }
+  }
+
+  while (begin2InteriorEdges.isNotEmpty) {
     final ring = Ring(vertices: []);
-    var edge = interiorEdges.values.first;
+    var edge = begin2InteriorEdges.values.first.last;
+    var fromBegin = true;
     while (true) {
-      ring.vertices.add(edge.begin.v!);
-      interiorEdges.remove(edge.begin.i);
-      final e = interiorEdges[edge.end.i] ?? interiorEdges[coincidence[edge.end.i]];
+      final begin = edge.begin;
+      final end = edge.end;
+      final p = fromBegin ? begin : end;
+      final q = fromBegin ? end : begin;
+      ring.vertices.add(p.v!);
+      remove<int, Edge>(mapToSet: begin2InteriorEdges, mapkey: begin.i, setValue: edge);
+      remove<int, Edge>(mapToSet: end2InteriorEdges, mapkey: end.i, setValue: edge);
+
+      final candidate = coincidence[p.i];
+      var e = begin2InteriorEdges[q.i] ?? begin2InteriorEdges[candidate];
+      fromBegin = e != null;
+      e ??= end2InteriorEdges[q.i] ?? begin2InteriorEdges[candidate];
       if (e == null) {
         break;
       }
-      edge = e;
+      edge = e.last;
     }
     ring.closed = true;
     result.add(ring);
