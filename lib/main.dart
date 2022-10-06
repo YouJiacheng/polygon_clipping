@@ -220,7 +220,8 @@ class Polygon {
 }
 
 class IntersectionInfo {
-  double t0; // not in [0, 1) => NOT an intersection
+  // 注意共线情况下t0和t1的含义与非共线情况不同
+  double t0;
   double t1;
   bool collinear;
   IntersectionInfo(this.t0, this.t1, {this.collinear = false});
@@ -306,10 +307,12 @@ class AnnotatedPoint {
   int i;
   Vector2? v;
   double t;
+  bool degeneracy;
   AnnotatedPoint({
     required this.i,
     this.v,
     this.t = double.infinity,
+    this.degeneracy = true,
   });
 }
 
@@ -347,24 +350,21 @@ void addIntersections({
       if (x.t0 == 0 && x.t1 == 0) {
         // p和r重合，需要被视为同一点
         coincidence.addAll({p.i: r.i, r.i: p.i});
-        p.t = 0; // 表明是退化情况，不能判断是交叉还是反弹
-        r.t = 0;
+        // 标记为交点，注意退化标记默认为true
+        p.t = r.t = 0;
         // 无需加入新的点
         continue;
       }
       if (x.collinear) {
-        // 处理共线情况
-        // 注意起点重合情况已处理
+        // 处理共线情况，注意起点重合情况已处理
         if (inRange(x.t0)) {
-          // r在pq上
-          r.t = 0; // 表明是退化情况
-          // 在pq上位置为t0
+          r.t = 0;
+          // r在pq上位置为t0
           subjectEdge.intersections.add(AnnotatedPoint(i: r.i, t: x.t0));
         }
         if (inRange(x.t1)) {
-          // p在rs上
           p.t = 0;
-          // 在rs上位置为t1
+          // p在rs上位置为t1
           clipEdge.intersections.add(AnnotatedPoint(i: p.i, t: x.t1));
         }
         // 如果r在pq上且p在rs上
@@ -375,8 +375,7 @@ void addIntersections({
       // 非共线情况下t0和t1的含义不同
       // 需要同时满足
       if (inRange(x.t0) && inRange(x.t1)) {
-        // 处理相交情况
-        // 注意起点重合情况已处理
+        // 处理相交情况，注意起点重合情况已处理
         if (x.t0 == 0) {
           // 交点在pq上位置为0，是p
           p.t = 0;
@@ -395,8 +394,8 @@ void addIntersections({
         }
         // 非退化正常相交
         // 创建交点
-        final i0 = AnnotatedPoint(i: indexBase, t: x.t0);
-        final i1 = AnnotatedPoint(i: indexBase, t: x.t1); // 同一点
+        final i0 = AnnotatedPoint(i: indexBase, t: x.t0, degeneracy: false);
+        final i1 = AnnotatedPoint(i: indexBase, t: x.t1, degeneracy: false); // 同一点
         indexBase += 1;
         subjectEdge.intersections.add(i0);
         clipEdge.intersections.add(i1);
@@ -419,35 +418,29 @@ void addInterior({
   required HashMap<int, HashSet<Edge>> end2InteriorEdges,
 }) {
   bool inside = false;
-  // var prevoiusEnd = AnnotatedPoint(i: -1); // -1 won't be any begin
+  int prevEndIndex = -1;
   for (final edge in edges) {
     final begin = edge.begin;
     final end = edge.end;
-    // todo: avoid useless windingNumber computation
-    // if (begin.i != prevoiusEnd.i || begin.t == 0) {
-    //   // 非连续边，或为退化情况
-    //   // 需要计算判断内外
-    //   final midpoint = edge.interp(0.5);
-    //   // 分割后边的中点在多边形边界上说明该边与多边形边界有重合
-    //   // 认为是inside
-    //   inside = onEdge(midpoint, polygon) || halfPlaneWindingNumber(midpoint, polygon) != 0;
-    // } else {
-    //   // 连续边且非退化
-    //   // (0, 1)是交叉情况（已排除0）
-    //   // 不在[0, 1)则没有穿过边界
-    //   inside = inside ^ inRange(begin.t);
-    // }
-    final midpoint = edge.interp(0.5);
-    // 分割后边的中点在多边形边界上说明该边与多边形边界有重合
-    // 认为是inside
-    inside = onEdge(midpoint, polygon) || halfPlaneWindingNumber(midpoint, polygon) != 0;
+    final intersected = inRange(begin.t);
+    if (begin.i != prevEndIndex || (intersected && begin.degeneracy)) {
+      // 非连续边或退化相交
+      // 需要计算判断内外
+      final midpoint = edge.interp(0.5);
+      // 分割后边的中点在多边形边界上说明该边与多边形边界有重合
+      // 认为是inside
+      inside = onEdge(midpoint, polygon) || halfPlaneWindingNumber(midpoint, polygon) != 0;
+    } else {
+      // 连续边且(非相交或非退化相交)
+      inside = inside ^ intersected;
+    }
     if (inside) {
       begin2InteriorEdges.putIfAbsent(begin.i, () => HashSet.identity());
       end2InteriorEdges.putIfAbsent(end.i, () => HashSet.identity());
       begin2InteriorEdges[begin.i]!.add(edge);
       end2InteriorEdges[end.i]!.add(edge);
     }
-    // prevoiusEnd = end;
+    prevEndIndex = end.i;
   }
 }
 
