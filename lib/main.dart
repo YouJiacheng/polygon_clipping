@@ -32,21 +32,22 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   static const grid = 30.0;
-  bool isClip = false;
-  bool rounded = false;
+  bool drawingClip = false;
+  bool roundingPoint = false;
+  bool usingNonzero = false;
   final subject = Polygon(color: Colors.blueAccent, rings: []);
   final clip = Polygon(color: Colors.redAccent, rings: []);
   final result = Polygon(color: Colors.purpleAccent, rings: []);
 
   void addVertex(Vector2 vertex) {
-    if (isClip) {
+    if (drawingClip) {
       return clip.addVertex(vertex);
     }
     subject.addVertex(vertex);
   }
 
   void closeRing() {
-    if (isClip) {
+    if (drawingClip) {
       return clip.closeRing();
     }
     subject.closeRing();
@@ -59,21 +60,21 @@ class _MyHomePageState extends State<MyHomePage> {
         title: Row(
           children: <Widget>[
             SizedBox(
-              width: 240,
+              width: 200,
               child: SwitchListTile(
                 title: Text(
-                  '输入状态：',
+                  '输入状态',
                   style: Theme.of(context).primaryTextTheme.headline6,
                 ),
                 subtitle: Text(
-                  isClip ? '裁剪多边形' : '主多边形',
+                  drawingClip ? '裁剪多边形' : '主多边形',
                   style: Theme.of(context).primaryTextTheme.bodyText1,
                 ),
-                value: isClip,
+                value: drawingClip,
                 activeColor: Colors.red,
                 onChanged: (value) {
                   setState(() {
-                    isClip = value;
+                    drawingClip = value;
                   });
                 },
               ),
@@ -85,11 +86,32 @@ class _MyHomePageState extends State<MyHomePage> {
                   '吸附网格',
                   style: Theme.of(context).primaryTextTheme.headline6,
                 ),
-                value: rounded,
+                value: roundingPoint,
                 activeColor: Colors.red,
                 onChanged: (value) {
                   setState(() {
-                    rounded = value;
+                    roundingPoint = value;
+                  });
+                },
+              ),
+            ),
+            SizedBox(
+              width: 230,
+              child: SwitchListTile(
+                title: Text(
+                  '内部判定准则',
+                  style: Theme.of(context).primaryTextTheme.headline6,
+                ),
+                subtitle: Text(
+                  usingNonzero ? '非零' : '奇偶',
+                  style: Theme.of(context).primaryTextTheme.bodyText1,
+                ),
+                value: usingNonzero,
+                activeColor: Colors.red,
+                onChanged: (value) {
+                  setState(() {
+                    usingNonzero = value;
+                    result.clear();
                   });
                 },
               ),
@@ -103,7 +125,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   result.clear();
                 });
               },
-              child: const Text('清除'),
+              child: const Text('重置'),
             ),
           ],
         ),
@@ -114,7 +136,7 @@ class _MyHomePageState extends State<MyHomePage> {
           onTapDown: (details) {
             setState(() {
               final p = details.localPosition;
-              final vertex = rounded
+              final vertex = roundingPoint
                   ? (Vector2(p.dx / grid, p.dy / grid)
                     ..round()
                     ..scale(grid))
@@ -129,7 +151,7 @@ class _MyHomePageState extends State<MyHomePage> {
           },
           child: CustomPaint(
             foregroundPainter: PolygonsPainter([subject, clip, result]),
-            child: CustomPaint(painter: GridPainter(grid: rounded ? grid : double.infinity)),
+            child: CustomPaint(painter: GridPainter(grid: roundingPoint ? grid : double.infinity)),
           ),
         ),
       ),
@@ -137,7 +159,11 @@ class _MyHomePageState extends State<MyHomePage> {
         onPressed: () {
           setState(() {
             result.rings.clear();
-            result.rings.addAll(clipping(subject: subject.rings, clip: clip.rings));
+            result.rings.addAll(clipping(
+              subject: subject.rings,
+              clip: clip.rings,
+              usingNonZero: usingNonzero,
+            ));
           });
         },
         tooltip: '裁剪',
