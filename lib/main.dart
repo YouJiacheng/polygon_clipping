@@ -1,9 +1,9 @@
-import 'dart:collection';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' show Vector2;
-import 'package:collection/collection.dart';
+
+import 'algorithm.dart';
+import 'ring.dart';
+import 'utils.dart';
 
 void main() {
   runApp(const MyApp());
@@ -32,8 +32,8 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   static const grid = 30.0;
-  var isClip = false;
-  var rounded = false;
+  bool isClip = false;
+  bool rounded = false;
   final subject = Polygon(color: Colors.blueAccent, rings: []);
   final clip = Polygon(color: Colors.redAccent, rings: []);
   final result = Polygon(color: Colors.purpleAccent, rings: []);
@@ -137,7 +137,7 @@ class _MyHomePageState extends State<MyHomePage> {
         onPressed: () {
           setState(() {
             result.rings.clear();
-            result.rings.addAll(clipping(subject: subject, clip: clip));
+            result.rings.addAll(clipping(subject: subject.rings, clip: clip.rings));
           });
         },
         tooltip: '裁剪',
@@ -145,17 +145,6 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
     );
   }
-}
-
-class Ring {
-  final List<Vector2> vertices;
-  bool closed;
-  Ring({
-    required this.vertices,
-    this.closed = false,
-  });
-  Iterable<Vector2> ringRelativeTo(Vector2 point) =>
-      vertices.map((v) => v - point).followedByFirst();
 }
 
 class Polygon {
@@ -217,317 +206,6 @@ class Polygon {
     }
     return path;
   }
-}
-
-class IntersectionInfo {
-  // 注意共线情况下t0和t1的含义与非共线情况不同
-  double t0;
-  double t1;
-  bool collinear;
-  IntersectionInfo(this.t0, this.t1, {this.collinear = false});
-  IntersectionInfo.empty() : this(double.infinity, double.infinity);
-}
-
-/// 参数区间[0, 1)
-bool inRange(double t) => t >= 0 && t < 1;
-
-/// 求交，参数区间[0, 1)
-IntersectionInfo intersect({
-  required Vector2 p,
-  required Vector2 q,
-  required Vector2 r,
-  required Vector2 s,
-}) {
-  final pq = q - p;
-  final rs = s - r;
-  final pr = r - p;
-  final cross = pq.cross(rs);
-  if (cross == 0) {
-    if (pq.cross(pr) != 0) {
-      // 平行
-      return IntersectionInfo.empty();
-    }
-    // 共线
-    // 因为参数区间是[0, 1)
-    // 只需考虑起点
-    final t0 = pq.dot(pr) / pq.length2; // r在pq上的位置
-    final t1 = rs.dot(-pr) / rs.length2; // p在rs上的位置
-    return IntersectionInfo(t0, t1, collinear: true);
-  }
-  return IntersectionInfo(
-    pr.cross(rs) / cross, // (p + pq * t - r).cross(rs) == 0 交点在pq上的位置
-    pq.cross(-pr) / cross, // pq.cross(r + rs * t - p) == 0 交点在rs上的位置
-  );
-}
-
-extension MyIterable<E> on Iterable<E> {
-  /// Returns a new lazy iterable with elements that are created by
-  /// calling [toElement] on each successive overlapping pair of
-  /// this iterable in iteration order.
-  Iterable<T> mapPair<T>(T Function(E prev, E elem) toElement) sync* {
-    E previousElement = first;
-    for (final element in skip(1)) {
-      yield toElement(previousElement, element);
-      previousElement = element;
-    }
-  }
-
-  Iterable<E> followedByFirst() {
-    return followedBy([first]);
-  }
-}
-
-int halfPlaneWindingNumber(Vector2 point, Polygon polygon) {
-  // 弧长累加法
-  // 经典的quadrant/象限方法使用[0, 90), [90, 180), [180, 270), [270, 360)
-  // 改进为半平面方法，使用[0, 180), [180, 360)
-  // 点不能在多边形的边上
-  bool plane(Vector2 p) {
-    return p.y > 0 || (p.y == 0 && p.x > 0);
-  }
-
-  int windingNumber(Vector2 a, Vector2 b) {
-    if (plane(a) == plane(b)) {
-      return 0;
-    }
-    return a.cross(b).sign.toInt();
-  }
-
-  assert(polygon.rings.every((ring) => ring.closed));
-  int w = polygon.rings.map((ring) => ring.ringRelativeTo(point).mapPair(windingNumber).sum).sum;
-  return w ~/ 2;
-}
-
-bool onEdge(Vector2 point, Polygon polygon) {
-  return polygon.rings.any((ring) =>
-      ring.ringRelativeTo(point).mapPair((a, b) => a.cross(b) == 0 && a.dot(b) <= 0).any((e) => e));
-}
-
-class AnnotatedPoint {
-  int i;
-  Vector2? v;
-  double t;
-  bool degeneracy;
-  AnnotatedPoint({
-    required this.i,
-    this.v,
-    this.t = double.infinity,
-    this.degeneracy = true,
-  });
-}
-
-class Edge {
-  AnnotatedPoint begin;
-  AnnotatedPoint end;
-  List<AnnotatedPoint> intersections;
-  Edge({required this.begin, required this.end}) : intersections = [];
-  Vector2 interp(double t) {
-    return begin.v! * (1 - t) + end.v! * t;
-  }
-}
-
-Iterable<Edge> toEdges(Ring ring, int indexBase) {
-  return ring.vertices
-      .mapIndexed((index, element) => AnnotatedPoint(i: indexBase + index, v: element))
-      .followedByFirst()
-      .mapPair((prev, elem) => Edge(begin: prev, end: elem));
-}
-
-// 求交
-void addIntersections({
-  required List<Edge> subjectEdges,
-  required List<Edge> clipEdges,
-  required HashMap<int, int> coincidence,
-  required int indexBase,
-}) {
-  for (final subjectEdge in subjectEdges) {
-    for (final clipEdge in clipEdges) {
-      final p = subjectEdge.begin;
-      final q = subjectEdge.end;
-      final r = clipEdge.begin;
-      final s = clipEdge.end;
-      final x = intersect(p: p.v!, q: q.v!, r: r.v!, s: s.v!);
-      if (x.t0 == 0 && x.t1 == 0) {
-        // p和r重合，需要被视为同一点
-        coincidence.addAll({p.i: r.i, r.i: p.i});
-        // 标记为交点，注意退化标记默认为true
-        p.t = r.t = 0;
-        // 无需加入新的点
-        continue;
-      }
-      if (x.collinear) {
-        // 处理共线情况，注意起点重合情况已处理
-        if (inRange(x.t0)) {
-          r.t = 0;
-          // r在pq上位置为t0
-          subjectEdge.intersections.add(AnnotatedPoint(i: r.i, t: x.t0));
-        }
-        if (inRange(x.t1)) {
-          p.t = 0;
-          // p在rs上位置为t1
-          clipEdge.intersections.add(AnnotatedPoint(i: p.i, t: x.t1));
-        }
-        // 如果r在pq上且p在rs上
-        // 即形如s-p-r-q
-        // 裁剪结果中会有重边但不影响
-        continue;
-      }
-      // 非共线情况下t0和t1的含义不同
-      // 需要同时满足
-      if (inRange(x.t0) && inRange(x.t1)) {
-        // 处理相交情况，注意起点重合情况已处理
-        if (x.t0 == 0) {
-          // 交点在pq上位置为0，是p
-          p.t = 0;
-          // 向clip加入p
-          // 其位置是x.t1
-          clipEdge.intersections.add(AnnotatedPoint(i: p.i, t: x.t1));
-          continue;
-        }
-        if (x.t1 == 0) {
-          // 交点在rs上位置为0，是r
-          r.t = 0;
-          // 向subject加入r
-          // 其位置是x.t0
-          subjectEdge.intersections.add(AnnotatedPoint(i: r.i, t: x.t0));
-          continue;
-        }
-        // 非退化正常相交
-        // 创建交点
-        final i0 = AnnotatedPoint(i: indexBase, t: x.t0, degeneracy: false);
-        final i1 = AnnotatedPoint(i: indexBase, t: x.t1, degeneracy: false); // 同一点
-        indexBase += 1;
-        subjectEdge.intersections.add(i0);
-        clipEdge.intersections.add(i1);
-        continue;
-      }
-    }
-  }
-}
-
-List<Edge> split(List<Edge> edges) => [
-      for (final edge in edges)
-        ...[edge.begin, ...edge.intersections..sortBy<num>((p) => p.t), edge.end]
-            .mapPair((prev, elem) => Edge(begin: prev, end: elem))
-    ];
-
-void addInterior({
-  required List<Edge> edges,
-  required Polygon polygon,
-  required HashMap<int, HashSet<Edge>> begin2InteriorEdges,
-  required HashMap<int, HashSet<Edge>> end2InteriorEdges,
-}) {
-  bool inside = false;
-  int prevEndIndex = -1;
-  for (final edge in edges) {
-    final begin = edge.begin;
-    final end = edge.end;
-    final intersected = inRange(begin.t);
-    if (begin.i != prevEndIndex || (intersected && begin.degeneracy)) {
-      // 非连续边或退化相交
-      // 需要计算判断内外
-      final midpoint = edge.interp(0.5);
-      // 分割后边的中点在多边形边界上说明该边与多边形边界有重合
-      // 认为是inside
-      inside = onEdge(midpoint, polygon) || halfPlaneWindingNumber(midpoint, polygon) != 0;
-    } else {
-      // 连续边且(非相交或非退化相交)
-      inside = inside ^ intersected;
-    }
-    if (inside) {
-      begin2InteriorEdges.putIfAbsent(begin.i, () => HashSet.identity());
-      end2InteriorEdges.putIfAbsent(end.i, () => HashSet.identity());
-      begin2InteriorEdges[begin.i]!.add(edge);
-      end2InteriorEdges[end.i]!.add(edge);
-    }
-    prevEndIndex = end.i;
-  }
-}
-
-List<Ring> clipping({required Polygon subject, required Polygon clip}) {
-  // 将多边形由顶点形式转换为边形式
-  // 同时为顶点标号
-  int indexBase = 0;
-  final subjectEdges = <Edge>[];
-  final clipEdges = <Edge>[];
-  final coincidence = HashMap<int, int>(); // todo: more degeneracy handling
-  for (final ring in subject.rings) {
-    subjectEdges.addAll(toEdges(ring, indexBase));
-    indexBase += ring.vertices.length;
-  }
-  for (final ring in clip.rings) {
-    clipEdges.addAll(toEdges(ring, indexBase));
-    indexBase += ring.vertices.length;
-  }
-  addIntersections(
-    subjectEdges: subjectEdges,
-    clipEdges: clipEdges,
-    coincidence: coincidence,
-    indexBase: indexBase,
-  ); // 此后不需要indexBase，因此无需返回增加后的indexBase
-  // 计算交点坐标
-  for (final edge in [...subjectEdges, ...clipEdges]) {
-    for (final p in edge.intersections) {
-      p.v = edge.interp(p.t);
-    }
-  }
-  // 重新分割边
-  final splitSubjectEdges = split(subjectEdges);
-  final splitClipEdges = split(clipEdges);
-  final begin2InteriorEdges = HashMap<int, HashSet<Edge>>();
-  final end2InteriorEdges = HashMap<int, HashSet<Edge>>();
-  addInterior(
-    edges: splitSubjectEdges,
-    polygon: clip,
-    begin2InteriorEdges: begin2InteriorEdges,
-    end2InteriorEdges: end2InteriorEdges,
-  );
-  addInterior(
-    edges: splitClipEdges,
-    polygon: subject,
-    begin2InteriorEdges: begin2InteriorEdges,
-    end2InteriorEdges: end2InteriorEdges,
-  );
-  final result = <Ring>[];
-  void remove<K, V>({
-    required HashMap<K, HashSet<V>> mapToSet,
-    required K mapkey,
-    required V setValue,
-  }) {
-    final set = mapToSet[mapkey]!;
-    if (set.length == 1) {
-      mapToSet.remove(mapkey);
-    } else {
-      set.remove(setValue);
-    }
-  }
-
-  while (begin2InteriorEdges.isNotEmpty) {
-    final ring = Ring(vertices: []);
-    var edge = begin2InteriorEdges.values.first.last;
-    var fromBegin = true;
-    while (true) {
-      final begin = edge.begin;
-      final end = edge.end;
-      final p = fromBegin ? begin : end;
-      final q = fromBegin ? end : begin;
-      ring.vertices.add(p.v!);
-      remove<int, Edge>(mapToSet: begin2InteriorEdges, mapkey: begin.i, setValue: edge);
-      remove<int, Edge>(mapToSet: end2InteriorEdges, mapkey: end.i, setValue: edge);
-
-      final alternative = coincidence[q.i];
-      var e = begin2InteriorEdges[q.i] ?? begin2InteriorEdges[alternative];
-      fromBegin = e != null;
-      e ??= end2InteriorEdges[q.i] ?? begin2InteriorEdges[alternative];
-      if (e == null) {
-        break;
-      }
-      edge = e.last;
-    }
-    ring.closed = true;
-    result.add(ring);
-  }
-  return result;
 }
 
 class PolygonsPainter extends CustomPainter {
