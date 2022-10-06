@@ -522,10 +522,10 @@ List<Ring> clipping({required Polygon subject, required Polygon clip}) {
       remove<int, Edge>(mapToSet: begin2InteriorEdges, mapkey: begin.i, setValue: edge);
       remove<int, Edge>(mapToSet: end2InteriorEdges, mapkey: end.i, setValue: edge);
 
-      final candidate = coincidence[p.i];
-      var e = begin2InteriorEdges[q.i] ?? begin2InteriorEdges[candidate];
+      final alternative = coincidence[q.i];
+      var e = begin2InteriorEdges[q.i] ?? begin2InteriorEdges[alternative];
       fromBegin = e != null;
-      e ??= end2InteriorEdges[q.i] ?? begin2InteriorEdges[candidate];
+      e ??= end2InteriorEdges[q.i] ?? begin2InteriorEdges[alternative];
       if (e == null) {
         break;
       }
